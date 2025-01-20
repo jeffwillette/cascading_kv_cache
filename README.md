@@ -43,3 +43,14 @@ cd third_party/LongBench-timber/
 ./run.sh -m qwen2-7b-instruct -d vanilla -g 0
 
 ```
+
+## Citation
+
+```tex
+@article{willette2024training,
+  title={Training-Free Exponential Context Extension via Cascading KV Cache},
+  author={Willette, Jeffrey and Lee, Heejun and Lee, Youngwan and Jeon, Myeongjae and Hwang, Sung Ju},
+  journal={arXiv preprint arXiv:2406.17808},
+  year={2024}
+}
+```
