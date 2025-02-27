@@ -3,6 +3,7 @@ import torch
 import transformers
 
 from peft import LoraConfig, TaskType
+from minference import MInference, get_support_models
 from peft import get_peft_model, prepare_model_for_kbit_training
 from cascade.models.llama.modeling_llama import LlamaForCausalLM, LlamaConfig, LlamaDecoderLayer
 from cascade.models.qwen2.modeling_qwen2 import Qwen2ForCausalLM, Qwen2Config, Qwen2DecoderLayer
@@ -10,13 +11,10 @@ from cascade.models.cascade_attention import sample_monkeypatch
 from cascade.models.snapkv import replace_llama
 from cascade.utils import seed
 
-# from cascade.main.jobs.bench_single_layer import job_bench_single_layer
 from cascade.main.jobs.passkey import job_passkey
 from cascade.main.jobs.attn_matrix_plot import job_attn_matrix
 from cascade.main.jobs.latency import job_latency
-from cascade.main.jobs.ppl_memory import job_ppl_memory
 from cascade.main.jobs.ppl import job_ppl
-from cascade.main.jobs.profile_ import job_profile
 from cascade.main.jobs.pg19 import job_ppl_pg19
 from cascade.main.jobs.wikitext import job_ppl_wikitext2
 from cascade.main.jobs.booksum import job_booksum
@@ -186,7 +184,7 @@ def load_model(args):
     config = get_config(model_id)
 
     config._attn_implementation = config.attn_implementation = 'eager'
-    if args.method in ["vanilla", "snapkv", "bigbird"]:
+    if args.method in ["vanilla", "snapkv", "bigbird", "minference-cascade"]:
         config._attn_implementation = config.attn_implementation = 'flash_attention_2'
 
     if args.job == "latency":
@@ -211,6 +209,69 @@ def load_model(args):
         # sinks and window args from cli args are fit into h2o setting within laod function
         from cascade.models.h2o import load
         model, _ = load(model_id, heavy_hitter=True, args=args)
+    elif args.method == "minference-cascade":
+        config._cascade_stride = 65536 + 32768 + 16384 - args.sinks
+
+        path = MODELS[args.model]
+        model = transformers.models.llama.modeling_llama.LlamaForCausalLM.from_pretrained(
+            path,
+            config=config,
+            torch_dtype=torch.float16,
+            device_map="cpu",
+        )
+
+        minference_name = args.model
+        if "llama" in minference_name.lower():
+            minference_name = "meta-llama/" + path.split("/")[-1]
+        elif "qwen" in minference_name.lower():
+            minference_name = "Qwen/" + path.split("/")[-1]
+        else:
+            raise NotImplementedError("model not implemented for minference")
+
+        model.minference_name = minference_name
+
+        # Patch MInference Module,
+        # If you use the local path, please use the model_name from HF when initializing MInference.
+        minference_patch = MInference(
+            attn_type="minference",
+            model_name=minference_name,
+            use_cascade=True,
+        )
+
+        model = minference_patch(model)
+        model = sample_monkeypatch(model)
+        model = model.cuda()
+
+    elif args.method == "minference":
+        path = MODELS[args.model]
+        model = transformers.models.llama.modeling_llama.LlamaForCausalLM.from_pretrained(
+            path,
+            config=config,
+            torch_dtype=torch.float16,
+            device_map="cpu",
+        )
+
+        minference_name = args.model
+        if "llama" in minference_name.lower():
+            minference_name = "meta-llama/" + path.split("/")[-1]
+        elif "qwen" in minference_name.lower():
+            minference_name = "Qwen/" + path.split("/")[-1]
+        else:
+            raise NotImplementedError("model not implemented for minference")
+
+        model.minference_name = minference_name
+
+        # Patch MInference Module,
+        # If you use the local path, please use the model_name from HF when initializing MInference.
+        minference_patch = MInference(
+            attn_type="minference",
+            model_name=minference_name,
+            use_cascade=False,
+        )
+
+        model = minference_patch(model)
+        model = model.cuda()
+
     elif args.method == "snapkv":
         if "llama" not in args.model:
             raise ValueError("SnapKV is only implemented for llama models")
@@ -293,16 +354,14 @@ def main():
     args = eval_args()
 
     assert args.job in [
-        'ppl', 'ppl-pg19', 'ppl-wikitext', 'ppl-memory', 'stream', 'mmlu',
-        'bench_single_layer', 'passkey', 'profile', "latency", "booksum", "attn_matrix_plot"
+        'ppl', 'ppl-pg19', 'ppl-wikitext', 'ppl-memory', 'mmlu',
+        'passkey', "latency", "booksum", "attn_matrix_plot"
     ]
 
     model, tokenizer, device = load_model(args)
 
     if args.job == 'ppl':
         job_ppl(args, model, tokenizer, device)
-    elif args.job == 'ppl-memory':
-        job_ppl_memory(args, model, tokenizer, device)
     elif args.job == 'attn_matrix_plot':
         job_attn_matrix(args, model, tokenizer, device)
     elif args.job == 'latency':
@@ -313,20 +372,10 @@ def main():
         job_ppl_pg19(args, model, tokenizer, device)
     elif args.job == 'ppl-wikitext':
         job_ppl_wikitext2(args, model, tokenizer, device)
-    elif args.job == 'profile':
-        job_profile(args, model, tokenizer, device)
     elif args.job == 'booksum':
         job_booksum(args, model, tokenizer, device)
-    elif args.job == 'stream':
-        raise NotImplementedError(
-            "implementation needs to be updated to current")
-        # job_stream(args, model, tokenizer, device)
     elif args.job == 'mmlu':
         job_mmlu(args, model, tokenizer, device)
-    elif args.job == 'bench_single_layer':
-        raise NotImplementedError(
-            "implementation needs to be updated to current")
-        # job_bench_single_layer(args, model, tokenizer, device)
     else:
         raise Exception()
 

@@ -66,10 +66,11 @@ def _attn_fwd_inner(
         # ------------------------------
         # for sum accumulation
         # coeff = 1
+        # ------------------------------
 
-        # for EMA accumulation
-        exps = tl.flip(tl.arange(0, BLOCK_M))[:, None]  # original submission
-        # exps = N_CTX - (start_m * tl.flip(tl.arange(0, BLOCK_M))[:, None])  # bugfix?
+        # for EMA accumulation --------
+        # exps = tl.flip(tl.arange(0, BLOCK_M))[:, None]  # original submission
+        exps = (N_CTX - 1) - (start_m + (tl.arange(0, BLOCK_M))[:, None])  # bugfix
         # do beta ** exps * (1 - beta)
         unmasked = tl.where(mask, 0, 1)
         exps = tl.exp2(exps.to(DTYPE) * tl.log2(beta))

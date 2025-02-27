@@ -1243,8 +1243,8 @@ class CascadingKVCache(Cache):
         else:
             raise ValueError(f"unknown cascade func: {self.cascade_func}")
 
-        # self.beta = np.exp(-np.log(100) / self.window_length)
-        self.beta = 0.9999
+        # self.beta = 0.999 # original submission
+        self.beta = 0.9999999  # adjusted up from original submission due to EMA bug in flash attention
 
         # per layer, not per cascade
         self.stored_tokens = [torch.zeros(B, H, self.cascades[l], device=dev, dtype=torch.long) for l in range(L)]
@@ -1743,7 +1743,6 @@ class CascadingKVCacheSlow(nn.Module):
                         self.pos_ub, self.tmp_arange)
                     break
                 else:
-                    # TODO: stopped here: there must be a bug in the index rotation for this method after the cache fills up.
                     # need to carefully check the logic
                     (_, input_key_states, input_value_states,
                      input_score_states) = self.evict_from_cache(

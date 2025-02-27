@@ -1,12 +1,7 @@
 [submodule "third_party/LongBench-timber"]
 	path = third_party/LongBench-timber
 	url = git@github.com:jeffwillette/LongBench-timber.git
-[submodule "third_party/hyper_attn"]
-	path = third_party/hyper_attn
-	url = git@github.com:jeffwillette/hyper-attn.git
-[submodule "third_party/RULER"]
-	path = third_party/RULER
-	url = https://github.com/jeffwillette/RULER
+	branch = cascade
 [submodule "third_party/H2O"]
 	path = third_party/H2O
 	url = https://github.com/jeffwillette/H2O

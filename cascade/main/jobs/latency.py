@@ -13,7 +13,7 @@ def job_latency(args, model, tokenizer, device):
     latency = []
     stride = args.cascade_stride
     rng = [2 ** i for i in range(12, 21)]
-    if args.method == "sink":
+    if args.method in ["sink", "minference-cascade"]:
         if args.cascade_stride == 1:
             rng = [2 ** i for i in range(12, 16)]
         else:
@@ -21,6 +21,9 @@ def job_latency(args, model, tokenizer, device):
     elif args.method == "h2o":
         # truncate because it will go OOM
         rng = [2 ** i for i in range(10, 14)]
+    elif args.method == "minference":
+        # truncate because it will go OOM
+        rng = [2 ** i for i in range(10, 20)]
 
     print(f"{args.method=}")
     for l in rng:
@@ -29,7 +32,7 @@ def job_latency(args, model, tokenizer, device):
         position_embeddings = m.rotary_emb(input_ids, torch.arange(l, device="cuda").view(1, -1))
         model = m.layers[0].self_attn
 
-        if args.method == "sink":
+        if args.method in ["sink", "minference-cascade"]:
             window = args.window // args.cascades
             past_key_values = CascadingKVCache(
                 window, num_sink_tokens=4, max_batch_size=1,
@@ -76,6 +79,89 @@ def job_latency(args, model, tokenizer, device):
                 t = time.perf_counter() - tic
                 latency.append(t)
                 print(f"latency for sink: len: {l}: {t}")
+
+                del output, input_ids, position_embeddings
+                torch.cuda.empty_cache()
+            elif args.method == "minference":
+                past_key_values = DynamicCache()
+                output = model(
+                    input_ids,
+                    attention_mask=None,
+                    position_ids=position_ids,
+                    output_attentions=False,
+                    past_key_value=past_key_values,
+                    use_cache=True
+                )
+                past_key_values = output[2]
+
+                del output
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+
+                model.last_it = False
+                past_key_values = DynamicCache()
+
+                tic = time.perf_counter()
+                output = model(
+                    input_ids,
+                    attention_mask=None,
+                    position_ids=position_ids,
+                    output_attentions=False,
+                    past_key_value=past_key_values,
+                    use_cache=True,
+                )
+                past_key_values = output[2]
+
+                torch.cuda.synchronize()
+                t = time.perf_counter() - tic
+                latency.append(t)
+                print(f"latency for minference: len: {l}: {t}")
+
+                del output, input_ids, position_embeddings
+                torch.cuda.empty_cache()
+
+            elif args.method == "minference-cascade":
+                model.last_it = False
+
+                for i in range(0, input_ids.size(1), stride):
+                    if i + stride >= input_ids.size(1):
+                        model.last_it = True
+
+                    inp = input_ids[:, i:i + stride]
+                    output = model(
+                        inp,
+                        attention_mask=None,
+                        position_ids=None,
+                        output_attentions=False,
+                        past_key_value=past_key_values, use_cache=True
+                    )
+                    past_key_values = output[2]
+
+                del output
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+
+                past_key_values.reset()
+                model.last_it = False
+
+                tic = time.perf_counter()
+                for i in range(0, input_ids.size(1), stride):
+                    if i + stride >= input_ids.size(1):
+                        model.last_it = True
+                    inp = input_ids[:, i:i + stride]
+                    output = model(
+                        inp,
+                        attention_mask=None,
+                        position_ids=None,
+                        output_attentions=False,
+                        past_key_value=past_key_values, use_cache=True
+                    )
+                    past_key_values = output[2]
+
+                torch.cuda.synchronize()
+                t = time.perf_counter() - tic
+                latency.append(t)
+                print(f"latency for minference-cascade: len: {l}: {t}")
 
                 del output, input_ids, position_embeddings
                 torch.cuda.empty_cache()

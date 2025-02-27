@@ -27,8 +27,6 @@ from cascade.main.jobs.infinite_bench_eval_utils import (
 from cascade.main.jobs.infinite_bench_args import parse_args
 
 
-USING_SGLANG = os.getenv('USING_SGLANG', '0') == '1'
-SGLANG_PORT = int(os.getenv('SGLANG_PORT', '30000'))
 MAX_POSITION_ID = int(os.getenv('SEQ_LEN', '128')) * 1024  # Determined by the model
 TRUNCATE_LEN = int(os.getenv('SEQ_LEN', '128')) * 1024
 print("truncate len: ", TRUNCATE_LEN)
@@ -90,117 +88,35 @@ def chunk_generate(
             inputs = inputs.to(model.device).to(torch.float16)  # type: ignore
         input_ids: Tensor = inputs.input_ids  # (b, n)
 
-        # attention_mask: Tensor = inputs.attention_mask  # (b, n)
-        # position_ids: Tensor = attention_mask.long().cumsum(dim=-1) - 1
-        # position_ids.masked_fill_(attention_mask == 0, value=1)
-        # seq_len = input_ids.shape[-1]
-        # print("seq_len:", seq_len)
-        # kv_cache: Any = None
-        # # Split into chunks for pre-filling
-        # chunk_idxs = []
-        # n = seq_len - 1
-        # while n > 0:
-        #     chunk_idxs.append(n)
-        #     n -= chunk_size
-        # chunk_idxs.append(0)
-        # chunk_idxs = chunk_idxs[::-1]
-        # chunk_lo = chunk_idxs[:-1]
-        # chunk_hi = chunk_idxs[1:]
-        # print(f"Number of chunks: {len(chunk_lo)}, generating...")
-        # start_time = time.time()
-        # for chunk_i, (chunk_lo, chunk_hi) in enumerate(
-        #     zip(chunk_lo, chunk_hi)
-        # ):
-        #     if verbose:
-        #         print(
-        #             f"[chunk {chunk_i}] {chunk_lo} : {chunk_hi}",
-        #             round(time.time() - start_time),
-        #         )
-        #     chunk_input_ids = input_ids[:, chunk_lo:chunk_hi]
-        #     if kv_cache is not None:
-        #         mask_start_idx = chunk_lo - kv_cache[0][0].shape[2]
-        #     else:
-        #         mask_start_idx = chunk_lo
-        #     chunk_attention_mask = attention_mask[:, mask_start_idx:chunk_hi]
-        #     chunk_position_ids = position_ids[:, chunk_lo:chunk_hi]
-        #     outputs: BaseModelOutputWithPast = model.model.forward(
-        #         input_ids=chunk_input_ids,
-        #         attention_mask=chunk_attention_mask,
-        #         position_ids=chunk_position_ids,
-        #         past_key_values=kv_cache,
-        #         return_dict=True,
-        #         use_cache=True,
-        #     )
-        #     kv_cache = outputs.past_key_values
-        #     # Discard KV states on the left beyond the window
-        #     new_cache = ()
-        #     n_layers = len(kv_cache)
-        #     for layer_i in range(n_layers):
-        #         keys = kv_cache[layer_i][0][:, :, -sliding_window:]
-        #         values = kv_cache[layer_i][1][:, :, -sliding_window:]
-        #         new_cache += ((keys, values),)
-        #     kv_cache = new_cache
-        # kv_cache_len = kv_cache[0][0].shape[2]
-        # outputs = model.generate(
-        #     input_ids=input_ids[:, :],
-        #     attention_mask=attention_mask[:, -kv_cache_len - 1 :],
-        #     max_new_tokens=max_tokens,
-        #     past_key_values=kv_cache,
-        #     eos_token_id=tok.pad_token_id,
-        #     use_cache=True,
-        #     do_sample=False,
-        # )
-
-        # print(tok.decode(input_ids[0], skip_special_tokens=False)[:500], tok.decode(input_ids[0], skip_special_tokens=False)[-500:])
-
-        if USING_SGLANG:
-            import requests
-
-            prompt_text = tok.decode(input_ids[0], skip_special_tokens=False)
-
-            response = requests.post(
-                f"http://localhost:{SGLANG_PORT}/generate",
-                json={
-                    "text": prompt_text,
-                    "sampling_params": {
-                        "top_k": 1,  # greedy
-                        "max_new_tokens": max_tokens,
-                    },
-                },
-            )
-            assert response.status_code == 200, response.json()
-            # print(response.json())
-            responses = [response.json()['text']]
-        else:
-            past_key_values = None
-            mdl = model.model
-            if os.getenv('METHOD', 'sink') in ["sink", "minference-cascade"]:
-                past_key_values = CascadingKVCache(
-                    mdl.config._window // mdl.config._cascades,
-                    num_sink_tokens=mdl.config._sinks,
-                    max_batch_size=mdl.config._batch_size,
-                    heads=mdl.config.num_key_value_heads // mdl.config.world_size,
-                    dim=mdl.config.hidden_size // mdl.config.num_attention_heads,
-                    max_seq_len=mdl.config._window,
-                    dtype=torch.float16,
-                    device=mdl.embed_tokens.weight.device,
-                    cascade_func=mdl.config._cascade_func,
-                    head_reduction=mdl.config._head_reduction,
-                    layers=len(mdl.layers),
-                )
-
-            outputs = model.generate(
-                input_ids=input_ids,
-                max_new_tokens=max_tokens,
-                # eos_token_id=tok.pad_token_id,
-                past_key_values=past_key_values,
-                use_cache=True,
-                do_sample=False,
+        past_key_values = None
+        mdl = model.model
+        if os.getenv('METHOD', 'sink') in ["sink", "minference-cascade"]:
+            past_key_values = CascadingKVCache(
+                mdl.config._window // mdl.config._cascades,
+                num_sink_tokens=mdl.config._sinks,
+                max_batch_size=mdl.config._batch_size,
+                heads=mdl.config.num_key_value_heads // mdl.config.world_size,
+                dim=mdl.config.hidden_size // mdl.config.num_attention_heads,
+                max_seq_len=mdl.config._window,
+                dtype=torch.float16,
+                device=mdl.embed_tokens.weight.device,
+                cascade_func=mdl.config._cascade_func,
+                head_reduction=mdl.config._head_reduction,
+                layers=len(mdl.layers),
             )
 
-            responses = [
-                tok.decode(t[input_ids.shape[-1]:], skip_special_tokens=True) for t in outputs
-            ]
+        outputs = model.generate(
+            input_ids=input_ids,
+            max_new_tokens=max_tokens,
+            # eos_token_id=tok.pad_token_id,
+            past_key_values=past_key_values,
+            use_cache=True,
+            do_sample=False,
+        )
+
+        responses = [
+            tok.decode(t[input_ids.shape[-1]:], skip_special_tokens=True) for t in outputs
+        ]
     return responses
 
 
@@ -219,9 +135,6 @@ def get_pred(
     if os.getenv('METHOD', 'sink') in ["minference", "vanilla", "pyramid_kv"]:
         input_text, len_after = truncate_by_tokens(input_text, tok, 32768)
     else:
-        # input_text, len_after = truncate_by_tokens(input_text, tok, 10000000)
-        # input_text, len_after = truncate_by_tokens(input_text, tok, 16384)
-        # input_text, len_after = truncate_by_tokens(input_text, tok, 65536 + 16384)
         input_text, len_after = truncate_by_tokens(input_text, tok, 10000000)
 
     # input_text, len_after = truncate_by_tokens(input_text, tok, TRUNCATE_LEN - max_tokens - 32)
@@ -283,8 +196,6 @@ def load_model(model_name: str) -> Tuple["LlamaForCausalLM", AutoTokenizer]:
         minference_patch = MInference(
             attn_type="minference",
             model_name=minference_name,
-            n_local=16384 + 512,
-            n_init=64,
         )
 
         model = minference_patch(model)
@@ -328,8 +239,6 @@ def load_model(model_name: str) -> Tuple["LlamaForCausalLM", AutoTokenizer]:
             attn_type="minference",
             model_name=minference_name,
             use_cascade=True,
-            n_local=16384 + 512,
-            n_init=64,
         )
 
         model = minference_patch(model)
@@ -386,21 +295,18 @@ def load_model(model_name: str) -> Tuple["LlamaForCausalLM", AutoTokenizer]:
 
         print("Loading model")
         start_time = time.time()
-        if not USING_SGLANG:
-            model = LlamaForCausalLM.from_pretrained(
-                model_name,
-                config=config,
-                device_map="cpu",
-                torch_dtype=torch.float16,
-            )
-            model = sample_monkeypatch(model)
-            model = model.cuda()
+        model = LlamaForCausalLM.from_pretrained(
+            model_name,
+            config=config,
+            device_map="cpu",
+            torch_dtype=torch.float16,
+        )
+        model = sample_monkeypatch(model)
+        model = model.cuda()
 
-            for m in model.modules():
-                if hasattr(m, 'attention_method'):
-                    m.attention_method = ATTENTION_METHOD
-        else:
-            model = None
+        for m in model.modules():
+            if hasattr(m, 'attention_method'):
+                m.attention_method = ATTENTION_METHOD
         print("Time taken:", round(time.time() - start_time))
 
     return model, tok  # type: ignore
@@ -408,14 +314,7 @@ def load_model(model_name: str) -> Tuple["LlamaForCausalLM", AutoTokenizer]:
 
 if __name__ == "__main__":
     args = parse_args()
-    IS_EXAONE = os.getenv('IS_EXAONE', '0') == '1'
-    IS_GEMMA = os.getenv('IS_GEMMA', '0') == '1'
-    if IS_EXAONE:
-        model_name = f"exaone3-{TRUNCATE_LEN // 1024}-{args.model_name}"
-    elif IS_GEMMA:
-        model_name = f'gemma2-{TRUNCATE_LEN // 1024}-{args.model_name}'
-    else:
-        model_name = f"llama3-{TRUNCATE_LEN // 1024}-{args.model_name}"
+    model_name = f"llama3-{TRUNCATE_LEN // 1024}-{args.model_name}"
 
     print(json.dumps(vars(args), indent=4))
     data_name = args.task

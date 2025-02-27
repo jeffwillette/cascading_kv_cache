@@ -41,3 +41,6 @@ save/
 *.nsys-rep
 *.egg-info
 .aim/*
+make_submission.bash
+.ipynb_checkpoints/*
+plotting*
