@@ -1,14 +1,19 @@
 # Cascading KV Cache
 
+![Cascading KV Cache](./cascading-cache.jpg)
+
+Cascading KV Cache is a fast and dynamic key-value cache which can be added to pretrained transformers. Our method
+converts a pretrained quadratic transformers into one with linear inference complexity. 
+
+| [**Paper (Arxiv, *latest*)**](https://arxiv.org/abs/2406.17808) | [**Paper (ICLR 2025)**](https://openreview.net/forum?id=dSneEp59yX)
 
 ## How to Install
 
 ```bash
-conda env create -f environment.yml
 pip install -e .
 
 # run tests
-python -m unittest
+python -m unittest -k [test_name_regex]
 ```
 
 ## Run Passkey
@@ -42,12 +47,6 @@ cd third_party/LongBench-timber/
 ./run.sh -m qwen2-7b-instruct -d sink -g 0
 ./run.sh -m qwen2-7b-instruct -d vanilla -g 0
 
-```
-
-## Run Tests
-
-```
-python -m unittest -k [test_name_regex]
 ```
 
 ## Citation
