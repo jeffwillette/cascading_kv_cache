@@ -262,10 +262,7 @@ def generate_samples(args, model, tokenizer, device, out_dir):
     for idx, item in enumerate(tqdm(test_dataset, dynamic_ncols=True, leave=True, desc="booksum")):
         inputs, completion = item
 
-        if is_vllm:
-            raise NotImplementedError("refer to original job file: https://github.com/gmlwns2000/hip-attention/blob/main/hip/main/jobs/booksum.py")
-        else:
-            output = generate_summary(args, model, tokenizer, device, idx, item, out_dir)
+        output = generate_summary(args, model, tokenizer, device, idx, item, out_dir)
 
         if output != -1:
             output_summary = output.replace('\n', '\\n')[:200]

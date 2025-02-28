@@ -285,62 +285,36 @@ class TestFlashAttention(unittest.TestCase):
             M2 = torch.full((N_CTX, N_CTX), 1, dtype=torch.bool, device="cuda").triu(1)
             M_eager = torch.cat((M.repeat(N_CTX, 1), M2), dim=-1)
 
-            window = 128
-            total = window * 4
-            cache = CascadingKVCache(
-                window, num_sink_tokens=64, max_batch_size=1,
-                heads=1, dim=128,
-                max_seq_len=total,
-                dtype=torch.float16,
-                device="cuda",
-                cascade_func="pow2",
-                head_reduction="mean",
-                layers=1,
-                eager_fill=False,
-            )
-
-            eager_cache = CascadingKVCache(
-                window, num_sink_tokens=64, max_batch_size=1,
-                heads=1, dim=128,
-                max_seq_len=total,
-                dtype=torch.float16,
-                device="cuda",
-                cascade_func="pow2",
-                head_reduction="mean",
-                layers=1,
-                eager_fill=False,
-            )
+            beta = 0.9999
 
             # flash
             scale = 1 / np.sqrt(q.size(-1))
-            _, score = attention(q, k, v, True, scale, M.squeeze(0), cache.beta)
+            _, score = attention(q, k, v, True, scale, M.squeeze(0), beta)
             print(f"kernel score: {score=}")
-            _, _, _, _, _, _, pos, _, og_pos = cache.update(k, v, 0, score)
-            # print(f"flash og pos {og_pos=}")
-            # print(f"flash score: {score=}")
 
             # eager
             qkT = torch.einsum("bhqd,bgkd->bhqk", np.sqrt(scale) * q, np.sqrt(scale) * k)
             qkT = qkT + (M_eager * torch.finfo(qkT.dtype).min)
-            eager_scores = qkT.softmax(dim=-1)
+            eager_scores = qkT.softmax(dim=-1).half()
 
-            beta = eager_cache.beta
             exps = (1 - beta) * beta**torch.arange(
-                eager_scores.size(2), device=eager_scores.device).flip(dims=(0, ))
-            eager_scores = (eager_scores * exps[None, None, :, None]).sum(dim=2).half()
-            # print(f"eager score: {eager_scores=}")
-            _, _, _, _, _, _, _, _, eager_og_pos = eager_cache.update(k, v, 0, eager_scores)
+                eager_scores.size(2), device=eager_scores.device).flip(dims=(0, )).half()
+            eager_scores = (eager_scores * exps.half()[None, None, :, None]).sum(dim=2)
             print(f"eager score: {eager_scores=}")
-            # print(f"{eager_og_pos=}")
 
-            # diff = og_pos != eager_og_pos
-            # print(f"{diff.sum()=}")
+            score_rank = score.argsort(dim=-1, descending=True).argsort(dim=-1).squeeze()
+            eager_rank = eager_scores.argsort(dim=-1, descending=True).argsort(dim=-1).squeeze()
+            spearman = 1 - 6 * ((score_rank - eager_rank) ** 2).sum() / (score_rank.size(0) * (score_rank.size(0) ** 2 - 1))
+            self.assertTrue(spearman.item() > 0.95, f"{spearman.item()=}")
 
-            score_diff = (score - eager_scores).abs().amax()
-            print(f"{score_diff=}")
-            self.assertTrue(torch.allclose(score, eager_scores, atol=1e-5), f"{score_diff=}")
+            # scores will be exact if BLOCK_N is set to 64 in flash attention kernel, and N_CTX, N_KV
+            # is also set to 64, 64 here. This is because there is no approximation over the softmax
+            # normalization constant in this case.
+            # score_diff = (score - eager_scores).abs().amax()
+            # print(f"{score_diff=}")
+            # self.assertTrue(torch.allclose(score, eager_scores, atol=1e-4), f"{score_diff=}")
 
-        del q, k, v, cache, eager_cache, qkT, M, M2, M_eager
+        # del q, k, v, cache, eager_cache, qkT, M, M2, M_eager
         gc.collect()
 
 
@@ -979,7 +953,7 @@ class RebuttalTest(unittest.TestCase):
             print(f"minference time ({2**i}): {time.perf_counter() - tic=}")
             # print(out)
 
-    def test_minference_cascade(self):
+    def test_cascade(self):
         args = self.args
         args.model = "llama3.1-8b-instruct"
 

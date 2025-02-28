@@ -1,6 +1,6 @@
 """
-Streaming-LLM: Triton Implementation
-gmlwns2000, jeffwillette @ github
+Cascading KV Cache
+jeffwillete, gmlwns2000 @ github
 """
 
 import time
@@ -1243,7 +1243,7 @@ class CascadingKVCache(Cache):
         else:
             raise ValueError(f"unknown cascade func: {self.cascade_func}")
 
-        # self.beta = 0.999 # original submission
+        # self.beta = 0.9999 # original submission
         self.beta = 0.9999999  # adjusted up from original submission due to EMA bug in flash attention
 
         # per layer, not per cascade

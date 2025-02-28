@@ -51,54 +51,6 @@ def get_config(model_id):
     return CONFIG_GETTERS[key].from_pretrained(model_id)
 
 
-def load_vllm_model(args: ArgsType):
-    from vllm import LLM
-
-    device = 'cuda:0'
-    MODELS = {
-        'vllm_llama32k': 'togethercomputer/LLaMA-2-7B-32K',
-        'vllm_llama128k': 'NousResearch/Yarn-Llama-2-7b-128k',
-        'vllm_llama13b_128k': 'NousResearch/Yarn-Llama-2-13b-128k',
-        'vllm_llama100k': 'Yukang/Llama-2-7b-longlora-100k-ft',
-        'vllm_llama32k_instruct': 'togethercomputer/Llama-2-7B-32K-Instruct',
-        'vllm_llama1b': 'princeton-nlp/Sheared-LLaMA-1.3B',
-        'vllm_llama7b': 'meta-llama/Llama-2-7b-hf',
-        'vllm_llama13b': 'meta-llama/Llama-2-13b-hf',
-        'vllm_qwen7b': 'Qwen/Qwen1.5-7B-Chat-GPTQ-Int4',
-        'vllm_qwen14b': 'Qwen/Qwen1.5-14B-Chat',
-        'vllm_qwen0.5b': 'Qwen/Qwen1.5-0.5B-Chat',
-        'vllm_pythia70m': 'EleutherAI/pythia-70m',
-        'vllm_yi6b': '01-ai/Yi-6B-200K',
-        'vllm_yi34b': 'brucethemoose/Yi-34B-200K-RPMerge',
-        'vllm_mixtral8x7b': 'TheBloke/Mixtral-8x7B-Instruct-v0.1-GPTQ',
-    }
-    assert args.model in MODELS
-    assert args.job in ['stream']
-    model_id = MODELS[args.model]
-
-    assert args.checkpoint is None
-
-    seq_len = args.stride
-    # seq_len = 10600
-    model = LLM(
-        model_id,
-        max_context_len_to_capture=seq_len,
-        max_num_seqs=args.batch_size,
-        max_model_len=seq_len,
-        swap_space=0,
-        kv_cache_dtype='fp8_e5m2',
-        dtype='half',
-        gpu_memory_utilization=0.8,
-        tensor_parallel_size=torch.cuda.device_count(),
-        enforce_eager=os.environ.get('FORCE_EAGER', '0') == '1',
-        trust_remote_code=True,
-    )
-
-    tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
-
-    return model, tokenizer, device
-
-
 def get_dtype(model_name, use_fp32=False):
     if use_fp32:
         return torch.float
@@ -170,9 +122,6 @@ MODELS = {
 
 
 def load_model(args):
-    if args.model.startswith('vllm'):
-        return load_vllm_model(args)
-
     device = 'cuda:0'
 
     assert args.model in MODELS, MODELS.keys()
@@ -210,6 +159,7 @@ def load_model(args):
         from cascade.models.h2o import load
         model, _ = load(model_id, heavy_hitter=True, args=args)
     elif args.method == "minference-cascade":
+        print("called minference cascade")
         config._cascade_stride = 65536 + 32768 + 16384 - args.sinks
 
         path = MODELS[args.model]
