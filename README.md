@@ -44,6 +44,12 @@ cd third_party/LongBench-timber/
 
 ```
 
+## Run Tests
+
+```
+python -m unittest -k [test_name_regex]
+```
+
 ## Citation
 
 ```tex
